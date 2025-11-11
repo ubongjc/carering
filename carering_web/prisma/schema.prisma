@@ -1,0 +1,509 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// Users & Auth
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  avatarUrl     String?
+  phone         String?
+  timezone      String?  @default("UTC")
+  preferences   Json?    // UI preferences, notification settings, etc.
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  memberships   CircleMembership[]
+  vitalReadings VitalReading[]
+  tasks         Task[]
+  scheduleSlots ScheduleSlot[]
+  createdCircles Circle[] @relation("CircleCreator")
+  sentMessages  Message[] @relation("SentMessages")
+  notifications Notification[] @relation("UserNotifications")
+  subscription  Subscription? @relation("UserSubscription")
+  activities    Activity[] @relation("UserActivities")
+
+  @@map("users")
+}
+
+// Care Circle
+model Circle {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  avatarUrl   String?
+  settings    Json?    // Circle-specific settings
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  creatorId   String
+
+  // Relationships
+  creator      User     @relation("CircleCreator", fields: [creatorId], references: [id])
+  members      CircleMembership[]
+  carePlans    CarePlan[]
+  messages     Message[] @relation("CircleMessages")
+  appointments Appointment[] @relation("CircleAppointments")
+  insights     HealthInsight[] @relation("CircleInsights")
+  activities   Activity[] @relation("CircleActivities")
+
+  @@map("circles")
+}
+
+// Circle Membership with ABAC roles
+model CircleMembership {
+  id        String   @id @default(cuid())
+  circleId  String
+  userId    String
+  role      CircleRole
+  permissions Json?  // ABAC permissions object
+  joinedAt  DateTime @default(now())
+
+  // Relationships
+  circle    Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([circleId, userId])
+  @@index([userId])
+  @@index([circleId])
+  @@map("circle_memberships")
+}
+
+enum CircleRole {
+  OWNER
+  ADMIN
+  CAREGIVER
+  FAMILY_MEMBER
+  VIEWER
+}
+
+// Care Plan
+model CarePlan {
+  id          String   @id @default(cuid())
+  circleId    String
+  title       String
+  description String?
+  goals       Json     // Array of goal objects
+  status      PlanStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  circle      Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  medications Medication[]
+  tasks       Task[]
+
+  @@index([circleId, status])
+  @@map("care_plans")
+}
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+// Medications
+model Medication {
+  id          String   @id @default(cuid())
+  carePlanId  String
+  name        String
+  dosage      String
+  frequency   String
+  instructions String?
+  imageUrl    String?  // Medication image
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  carePlan    CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  logs        MedicationLog[]
+  reminders   MedicationReminder[] @relation("MedicationReminders")
+
+  @@index([carePlanId, isActive])
+  @@index([startDate, endDate])
+  @@map("medications")
+}
+
+// Medication Log (for tracking adherence)
+model MedicationLog {
+  id            String   @id @default(cuid())
+  medicationId  String
+  takenAt       DateTime
+  takenBy       String?  // Optional: who administered it
+  notes         String?
+  status        MedLogStatus
+  createdAt     DateTime @default(now())
+
+  // Relationships
+  medication    Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@index([medicationId, takenAt])
+  @@index([takenAt, status])
+  @@map("medication_logs")
+}
+
+enum MedLogStatus {
+  TAKEN
+  SKIPPED
+  DELAYED
+  PARTIAL
+}
+
+// Vital Readings
+model VitalReading {
+  id          String   @id @default(cuid())
+  userId      String
+  type        VitalType
+  value       Float
+  unit        String
+  notes       String?
+  recordedAt  DateTime @default(now())
+  source      String?  // e.g., "manual", "healthkit", "device"
+  metadata    Json?    // Additional device info
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, recordedAt])
+  @@map("vital_readings")
+}
+
+enum VitalType {
+  BLOOD_PRESSURE_SYSTOLIC
+  BLOOD_PRESSURE_DIASTOLIC
+  HEART_RATE
+  BLOOD_GLUCOSE
+  TEMPERATURE
+  WEIGHT
+  OXYGEN_SATURATION
+  RESPIRATORY_RATE
+}
+
+// Tasks & Activities
+model Task {
+  id          String   @id @default(cuid())
+  carePlanId  String?
+  assigneeId  String?
+  title       String
+  description String?
+  dueAt       DateTime?
+  completedAt DateTime?
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus @default(TODO)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  carePlan    CarePlan? @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  assignee    User?     @relation(fields: [assigneeId], references: [id])
+
+  @@index([carePlanId, status])
+  @@index([assigneeId, status])
+  @@index([dueAt, status])
+  @@map("tasks")
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Schedule & Rotation
+model ScheduleSlot {
+  id          String   @id @default(cuid())
+  userId      String
+  startTime   DateTime
+  endTime     DateTime
+  type        String   // e.g., "shift", "respite", "appointment"
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startTime])
+  @@map("schedule_slots")
+}
+
+// File/Document Storage (metadata, actual files in R2)
+model Document {
+  id          String   @id @default(cuid())
+  fileName    String
+  fileKey     String   @unique // R2 object key
+  mimeType    String
+  sizeBytes   Int
+  encrypted   Boolean  @default(false) // client-side encrypted
+  uploadedBy  String
+  uploadedAt  DateTime @default(now())
+  metadata    Json?
+
+  @@map("documents")
+}
+
+// Audit Trail
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// Messaging
+model Message {
+  id          String   @id @default(cuid())
+  circleId    String
+  senderId    String
+  content     String
+  type        MessageType @default(TEXT)
+  attachments Json?
+  readBy      String[]
+  reactions   Json?
+  replyToId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id])
+  circle      Circle   @relation("CircleMessages", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, createdAt])
+  @@map("messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  VOICE
+  SYSTEM
+}
+
+// Appointments
+model Appointment {
+  id          String   @id @default(cuid())
+  circleId    String
+  title       String
+  description String?
+  type        AppointmentType
+  startTime   DateTime
+  endTime     DateTime
+  location    String?
+  provider    String?
+  notes       String?
+  reminders   Json?
+  status      AppointmentStatus @default(SCHEDULED)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  circle      Circle   @relation("CircleAppointments", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, startTime])
+  @@map("appointments")
+}
+
+enum AppointmentType {
+  MEDICAL
+  THERAPY
+  LAB
+  PHARMACY
+  HOME_VISIT
+  TELEHEALTH
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// Notifications
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        NotificationType
+  title       String
+  body        String
+  data        Json?
+  read        Boolean  @default(false)
+  actionUrl   String?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user        User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  MEDICATION_REMINDER
+  APPOINTMENT_REMINDER
+  VITAL_ALERT
+  TASK_ASSIGNED
+  MESSAGE_RECEIVED
+  CIRCLE_INVITE
+  SYSTEM
+}
+
+// Medication Reminders
+model MedicationReminder {
+  id            String   @id @default(cuid())
+  medicationId  String
+  time          String   // HH:mm format
+  daysOfWeek    Int[]    // 0-6, Sunday=0
+  enabled       Boolean  @default(true)
+  snoozeMinutes Int      @default(15)
+  createdAt     DateTime @default(now())
+
+  // Relationships
+  medication    Medication @relation("MedicationReminders", fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@index([medicationId, enabled])
+  @@map("medication_reminders")
+}
+
+// Subscriptions
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String
+  tier              SubscriptionTier
+  status            SubscriptionStatus
+  stripeCustomerId  String?  @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId     String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relationships
+  user              User     @relation("UserSubscription", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@map("subscriptions")
+}
+
+enum SubscriptionTier {
+  FREE
+  FAMILY
+  AGENCY
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  TRIALING
+}
+
+// AI Health Insights
+model HealthInsight {
+  id          String   @id @default(cuid())
+  circleId    String
+  type        InsightType
+  title       String
+  description String
+  severity    InsightSeverity
+  actionable  Boolean  @default(true)
+  data        Json?
+  dismissed   Boolean  @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  circle      Circle   @relation("CircleInsights", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, dismissed, createdAt])
+  @@map("health_insights")
+}
+
+enum InsightType {
+  MEDICATION_ADHERENCE
+  VITAL_TREND
+  APPOINTMENT_UPCOMING
+  MISSED_MEDICATION
+  ABNORMAL_VITAL
+  HEALTH_DECLINE
+  POSITIVE_TREND
+}
+
+enum InsightSeverity {
+  INFO
+  WARNING
+  URGENT
+  CRITICAL
+}
+
+// Activity Feed
+model Activity {
+  id          String   @id @default(cuid())
+  circleId    String
+  userId      String?
+  type        ActivityType
+  title       String
+  description String?
+  data        Json?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  circle      Circle   @relation("CircleActivities", fields: [circleId], references: [id], onDelete: Cascade)
+  user        User?    @relation("UserActivities", fields: [userId], references: [id])
+
+  @@index([circleId, createdAt])
+  @@map("activities")
+}
+
+enum ActivityType {
+  MEDICATION_LOGGED
+  VITAL_RECORDED
+  TASK_COMPLETED
+  APPOINTMENT_SCHEDULED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  CIRCLE_UPDATED
+  DOCUMENT_UPLOADED
+  MESSAGE_SENT
+}
