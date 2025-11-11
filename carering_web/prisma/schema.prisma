@@ -1,0 +1,259 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// Users & Auth
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  memberships   CircleMembership[]
+  vitalReadings VitalReading[]
+  tasks         Task[]
+  scheduleSlots ScheduleSlot[]
+  createdCircles Circle[] @relation("CircleCreator")
+
+  @@map("users")
+}
+
+// Care Circle
+model Circle {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  creatorId   String
+
+  // Relationships
+  creator     User     @relation("CircleCreator", fields: [creatorId], references: [id])
+  members     CircleMembership[]
+  carePlans   CarePlan[]
+
+  @@map("circles")
+}
+
+// Circle Membership with ABAC roles
+model CircleMembership {
+  id        String   @id @default(cuid())
+  circleId  String
+  userId    String
+  role      CircleRole
+  permissions Json?  // ABAC permissions object
+  joinedAt  DateTime @default(now())
+
+  // Relationships
+  circle    Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([circleId, userId])
+  @@map("circle_memberships")
+}
+
+enum CircleRole {
+  OWNER
+  ADMIN
+  CAREGIVER
+  FAMILY_MEMBER
+  VIEWER
+}
+
+// Care Plan
+model CarePlan {
+  id          String   @id @default(cuid())
+  circleId    String
+  title       String
+  description String?
+  goals       Json     // Array of goal objects
+  status      PlanStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  circle      Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  medications Medication[]
+  tasks       Task[]
+
+  @@map("care_plans")
+}
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+// Medications
+model Medication {
+  id          String   @id @default(cuid())
+  carePlanId  String
+  name        String
+  dosage      String
+  frequency   String
+  instructions String?
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  carePlan    CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  logs        MedicationLog[]
+
+  @@map("medications")
+}
+
+// Medication Log (for tracking adherence)
+model MedicationLog {
+  id            String   @id @default(cuid())
+  medicationId  String
+  takenAt       DateTime
+  takenBy       String?  // Optional: who administered it
+  notes         String?
+  status        MedLogStatus
+  createdAt     DateTime @default(now())
+
+  // Relationships
+  medication    Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@map("medication_logs")
+}
+
+enum MedLogStatus {
+  TAKEN
+  SKIPPED
+  DELAYED
+  PARTIAL
+}
+
+// Vital Readings
+model VitalReading {
+  id          String   @id @default(cuid())
+  userId      String
+  type        VitalType
+  value       Float
+  unit        String
+  notes       String?
+  recordedAt  DateTime @default(now())
+  source      String?  // e.g., "manual", "healthkit", "device"
+  metadata    Json?    // Additional device info
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, recordedAt])
+  @@map("vital_readings")
+}
+
+enum VitalType {
+  BLOOD_PRESSURE_SYSTOLIC
+  BLOOD_PRESSURE_DIASTOLIC
+  HEART_RATE
+  BLOOD_GLUCOSE
+  TEMPERATURE
+  WEIGHT
+  OXYGEN_SATURATION
+  RESPIRATORY_RATE
+}
+
+// Tasks & Activities
+model Task {
+  id          String   @id @default(cuid())
+  carePlanId  String?
+  assigneeId  String?
+  title       String
+  description String?
+  dueAt       DateTime?
+  completedAt DateTime?
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus @default(TODO)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  carePlan    CarePlan? @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
+  assignee    User?     @relation(fields: [assigneeId], references: [id])
+
+  @@map("tasks")
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Schedule & Rotation
+model ScheduleSlot {
+  id          String   @id @default(cuid())
+  userId      String
+  startTime   DateTime
+  endTime     DateTime
+  type        String   // e.g., "shift", "respite", "appointment"
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startTime])
+  @@map("schedule_slots")
+}
+
+// File/Document Storage (metadata, actual files in R2)
+model Document {
+  id          String   @id @default(cuid())
+  fileName    String
+  fileKey     String   @unique // R2 object key
+  mimeType    String
+  sizeBytes   Int
+  encrypted   Boolean  @default(false) // client-side encrypted
+  uploadedBy  String
+  uploadedAt  DateTime @default(now())
+  metadata    Json?
+
+  @@map("documents")
+}
+
+// Audit Trail
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
