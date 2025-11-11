@@ -18,6 +18,9 @@ model User {
   email         String   @unique
   name          String?
   avatarUrl     String?
+  phone         String?
+  timezone      String?  @default("UTC")
+  preferences   Json?    // UI preferences, notification settings, etc.
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -27,6 +30,10 @@ model User {
   tasks         Task[]
   scheduleSlots ScheduleSlot[]
   createdCircles Circle[] @relation("CircleCreator")
+  sentMessages  Message[] @relation("SentMessages")
+  notifications Notification[] @relation("UserNotifications")
+  subscription  Subscription? @relation("UserSubscription")
+  activities    Activity[] @relation("UserActivities")
 
   @@map("users")
 }
@@ -36,14 +43,20 @@ model Circle {
   id          String   @id @default(cuid())
   name        String
   description String?
+  avatarUrl   String?
+  settings    Json?    // Circle-specific settings
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   creatorId   String
 
   // Relationships
-  creator     User     @relation("CircleCreator", fields: [creatorId], references: [id])
-  members     CircleMembership[]
-  carePlans   CarePlan[]
+  creator      User     @relation("CircleCreator", fields: [creatorId], references: [id])
+  members      CircleMembership[]
+  carePlans    CarePlan[]
+  messages     Message[] @relation("CircleMessages")
+  appointments Appointment[] @relation("CircleAppointments")
+  insights     HealthInsight[] @relation("CircleInsights")
+  activities   Activity[] @relation("CircleActivities")
 
   @@map("circles")
 }
@@ -108,6 +121,7 @@ model Medication {
   dosage      String
   frequency   String
   instructions String?
+  imageUrl    String?  // Medication image
   startDate   DateTime
   endDate     DateTime?
   isActive    Boolean  @default(true)
@@ -117,6 +131,7 @@ model Medication {
   // Relationships
   carePlan    CarePlan @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
   logs        MedicationLog[]
+  reminders   MedicationReminder[] @relation("MedicationReminders")
 
   @@map("medications")
 }
@@ -256,4 +271,228 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// Messaging
+model Message {
+  id          String   @id @default(cuid())
+  circleId    String
+  senderId    String
+  content     String
+  type        MessageType @default(TEXT)
+  attachments Json?
+  readBy      String[]
+  reactions   Json?
+  replyToId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id])
+  circle      Circle   @relation("CircleMessages", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, createdAt])
+  @@map("messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  VOICE
+  SYSTEM
+}
+
+// Appointments
+model Appointment {
+  id          String   @id @default(cuid())
+  circleId    String
+  title       String
+  description String?
+  type        AppointmentType
+  startTime   DateTime
+  endTime     DateTime
+  location    String?
+  provider    String?
+  notes       String?
+  reminders   Json?
+  status      AppointmentStatus @default(SCHEDULED)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  circle      Circle   @relation("CircleAppointments", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, startTime])
+  @@map("appointments")
+}
+
+enum AppointmentType {
+  MEDICAL
+  THERAPY
+  LAB
+  PHARMACY
+  HOME_VISIT
+  TELEHEALTH
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// Notifications
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        NotificationType
+  title       String
+  body        String
+  data        Json?
+  read        Boolean  @default(false)
+  actionUrl   String?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  user        User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  MEDICATION_REMINDER
+  APPOINTMENT_REMINDER
+  VITAL_ALERT
+  TASK_ASSIGNED
+  MESSAGE_RECEIVED
+  CIRCLE_INVITE
+  SYSTEM
+}
+
+// Medication Reminders
+model MedicationReminder {
+  id            String   @id @default(cuid())
+  medicationId  String
+  time          String   // HH:mm format
+  daysOfWeek    Int[]    // 0-6, Sunday=0
+  enabled       Boolean  @default(true)
+  snoozeMinutes Int      @default(15)
+  createdAt     DateTime @default(now())
+
+  // Relationships
+  medication    Medication @relation("MedicationReminders", fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@map("medication_reminders")
+}
+
+// Subscriptions
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String
+  tier              SubscriptionTier
+  status            SubscriptionStatus
+  stripeCustomerId  String?  @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId     String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relationships
+  user              User     @relation("UserSubscription", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@map("subscriptions")
+}
+
+enum SubscriptionTier {
+  FREE
+  FAMILY
+  AGENCY
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  TRIALING
+}
+
+// AI Health Insights
+model HealthInsight {
+  id          String   @id @default(cuid())
+  circleId    String
+  type        InsightType
+  title       String
+  description String
+  severity    InsightSeverity
+  actionable  Boolean  @default(true)
+  data        Json?
+  dismissed   Boolean  @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  circle      Circle   @relation("CircleInsights", fields: [circleId], references: [id], onDelete: Cascade)
+
+  @@index([circleId, dismissed, createdAt])
+  @@map("health_insights")
+}
+
+enum InsightType {
+  MEDICATION_ADHERENCE
+  VITAL_TREND
+  APPOINTMENT_UPCOMING
+  MISSED_MEDICATION
+  ABNORMAL_VITAL
+  HEALTH_DECLINE
+  POSITIVE_TREND
+}
+
+enum InsightSeverity {
+  INFO
+  WARNING
+  URGENT
+  CRITICAL
+}
+
+// Activity Feed
+model Activity {
+  id          String   @id @default(cuid())
+  circleId    String
+  userId      String?
+  type        ActivityType
+  title       String
+  description String?
+  data        Json?
+  createdAt   DateTime @default(now())
+
+  // Relationships
+  circle      Circle   @relation("CircleActivities", fields: [circleId], references: [id], onDelete: Cascade)
+  user        User?    @relation("UserActivities", fields: [userId], references: [id])
+
+  @@index([circleId, createdAt])
+  @@map("activities")
+}
+
+enum ActivityType {
+  MEDICATION_LOGGED
+  VITAL_RECORDED
+  TASK_COMPLETED
+  APPOINTMENT_SCHEDULED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  CIRCLE_UPDATED
+  DOCUMENT_UPLOADED
+  MESSAGE_SENT
 }
