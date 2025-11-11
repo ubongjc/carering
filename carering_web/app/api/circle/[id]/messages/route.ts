@@ -1,7 +1,10 @@
 import { NextRequest } from 'next/server';
-import { successResponse, errorResponse, unauthorizedResponse, forbiddenResponse } from '@/lib/api-response';
+import { successResponse, errorResponse, validationErrorResponse, unauthorizedResponse, forbiddenResponse } from '@/lib/api-response';
 import { requireAuth, checkCircleAccess } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { createMessageSchema } from '@/lib/validations';
+import { ZodError } from 'zod';
+import { sanitizeInput } from '@/lib/security';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -55,19 +58,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { id: circleId } = await context.params;
     const body = await request.json();
 
+    // Validate request body
+    const validatedData = createMessageSchema.parse(body);
+
     const hasAccess = await checkCircleAccess(authContext.userId, circleId);
     if (!hasAccess) {
       return forbiddenResponse();
     }
 
+    // Sanitize content
+    const sanitizedContent = sanitizeInput(validatedData.content);
+
     const message = await prisma.message.create({
       data: {
         circleId,
         senderId: authContext.userId,
-        content: body.content,
-        type: body.type || 'TEXT',
-        attachments: body.attachments,
-        replyToId: body.replyToId,
+        content: sanitizedContent,
+        type: validatedData.type,
+        attachments: validatedData.attachments || [],
+        replyToId: validatedData.replyToId,
       },
       include: {
         sender: {
@@ -88,6 +97,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return unauthorizedResponse();
     }
+
+    if (error instanceof ZodError) {
+      return validationErrorResponse('Invalid request data', error.issues);
+    }
+
     console.error('Error sending message:', error);
     return errorResponse('Failed to send message', 500);
   }

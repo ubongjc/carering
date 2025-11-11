@@ -16,7 +16,7 @@ export function rateLimit(options: {
   return function rateLimitMiddleware(req: NextRequest): NextResponse | null {
     const identifier = options.identifier
       ? options.identifier(req)
-      : req.ip || req.headers.get('x-forwarded-for') || 'unknown';
+      : req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
 
     const now = Date.now();
     const record = rateLimitStore.get(identifier);
@@ -189,7 +189,7 @@ export function getClientIP(req: NextRequest): string {
     return realIP;
   }
 
-  return req.ip || 'unknown';
+  return 'unknown';
 }
 
 /**

@@ -9,6 +9,7 @@ import {
 } from '@/lib/api-response';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { updateMedicationSchema } from '@/lib/validations';
 import { ZodError } from 'zod';
 
 interface RouteContext {
@@ -70,6 +71,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     const body = await request.json();
 
+    // Validate request body
+    const validatedData = updateMedicationSchema.parse(body);
+
     // Get medication with circle info
     const existingMedication = await prisma.medication.findUnique({
       where: { id },
@@ -98,19 +102,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return forbiddenResponse('Insufficient permissions');
     }
 
+    // Build update data object
+    const updateData: any = {};
+    if (validatedData.name !== undefined) updateData.name = validatedData.name;
+    if (validatedData.dosage !== undefined) updateData.dosage = validatedData.dosage;
+    if (validatedData.frequency !== undefined) updateData.frequency = validatedData.frequency;
+    if (validatedData.instructions !== undefined) updateData.instructions = validatedData.instructions;
+    if (validatedData.imageUrl !== undefined) updateData.imageUrl = validatedData.imageUrl;
+    if (validatedData.startDate !== undefined) updateData.startDate = new Date(validatedData.startDate);
+    if (validatedData.endDate !== undefined) updateData.endDate = validatedData.endDate ? new Date(validatedData.endDate) : null;
+    if (validatedData.isActive !== undefined) updateData.isActive = validatedData.isActive;
+
     // Update medication
     const medication = await prisma.medication.update({
       where: { id },
-      data: {
-        ...body.name && { name: body.name },
-        ...body.dosage && { dosage: body.dosage },
-        ...body.frequency && { frequency: body.frequency },
-        ...body.instructions !== undefined && { instructions: body.instructions },
-        ...body.imageUrl !== undefined && { imageUrl: body.imageUrl },
-        ...body.startDate && { startDate: new Date(body.startDate) },
-        ...body.endDate !== undefined && { endDate: body.endDate ? new Date(body.endDate) : null },
-        ...body.isActive !== undefined && { isActive: body.isActive },
-      },
+      data: updateData,
       include: {
         reminders: true,
         logs: {
@@ -125,9 +131,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       data: {
         circleId: existingMedication.carePlan.circleId,
         userId: authContext.userId,
-        type: 'MEDICATION_LOGGED',
+        type: 'MEDICATION_UPDATED',
         title: 'Medication updated',
         description: `${medication.name} has been updated`,
+        data: { medicationId: medication.id, updates: Object.keys(updateData) },
       },
     });
 
@@ -135,6 +142,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return unauthorizedResponse();
+    }
+
+    if (error instanceof ZodError) {
+      return validationErrorResponse('Invalid request data', error.issues);
     }
 
     console.error('Error updating medication:', error);

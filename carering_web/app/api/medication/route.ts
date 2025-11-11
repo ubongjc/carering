@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof ZodError) {
-      return validationErrorResponse('Invalid request data', error.errors);
+      return validationErrorResponse('Invalid request data', error.issues);
     }
 
     console.error('Error creating medication:', error);

@@ -75,6 +75,8 @@ model CircleMembership {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([circleId, userId])
+  @@index([userId])
+  @@index([circleId])
   @@map("circle_memberships")
 }
 
@@ -102,6 +104,7 @@ model CarePlan {
   medications Medication[]
   tasks       Task[]
 
+  @@index([circleId, status])
   @@map("care_plans")
 }
 
@@ -133,6 +136,8 @@ model Medication {
   logs        MedicationLog[]
   reminders   MedicationReminder[] @relation("MedicationReminders")
 
+  @@index([carePlanId, isActive])
+  @@index([startDate, endDate])
   @@map("medications")
 }
 
@@ -149,6 +154,8 @@ model MedicationLog {
   // Relationships
   medication    Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
 
+  @@index([medicationId, takenAt])
+  @@index([takenAt, status])
   @@map("medication_logs")
 }
 
@@ -207,6 +214,9 @@ model Task {
   carePlan    CarePlan? @relation(fields: [carePlanId], references: [id], onDelete: Cascade)
   assignee    User?     @relation(fields: [assigneeId], references: [id])
 
+  @@index([carePlanId, status])
+  @@index([assigneeId, status])
+  @@index([dueAt, status])
   @@map("tasks")
 }
 
@@ -387,6 +397,7 @@ model MedicationReminder {
   // Relationships
   medication    Medication @relation("MedicationReminders", fields: [medicationId], references: [id], onDelete: Cascade)
 
+  @@index([medicationId, enabled])
   @@map("medication_reminders")
 }
 

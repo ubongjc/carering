@@ -211,7 +211,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     if (error instanceof ZodError) {
-      return validationErrorResponse('Invalid request data', error.errors);
+      return validationErrorResponse('Invalid request data', error.issues);
     }
 
     console.error('Error updating circle:', error);

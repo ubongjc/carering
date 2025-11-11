@@ -76,7 +76,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return unauthorizedResponse();
     }
     if (error instanceof ZodError) {
-      return validationErrorResponse('Invalid request data', error.errors);
+      return validationErrorResponse('Invalid request data', error.issues);
     }
     console.error('Error logging medication:', error);
     return errorResponse('Failed to log medication', 500);

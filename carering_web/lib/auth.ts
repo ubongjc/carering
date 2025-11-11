@@ -1,6 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { prisma } from './prisma';
-import { CircleRole } from '@prisma/client';
+
+// CircleRole enum (from Prisma schema)
+export type CircleRole = 'OWNER' | 'ADMIN' | 'CAREGIVER' | 'FAMILY_MEMBER' | 'VIEWER';
 
 export interface AuthContext {
   userId: string;
@@ -58,7 +60,7 @@ export async function checkCircleAccess(
     VIEWER: 1,
   };
 
-  return roleHierarchy[membership.role] >= roleHierarchy[requiredRole];
+  return roleHierarchy[membership.role as CircleRole] >= roleHierarchy[requiredRole];
 }
 
 /**
@@ -135,6 +137,6 @@ export async function checkPermission(
     VIEWER: ['careplan.view', 'vitals.view', 'task.view'],
   };
 
-  const rolePermissions = defaultPermissions[membership.role] || [];
+  const rolePermissions = defaultPermissions[membership.role as CircleRole] || [];
   return rolePermissions.includes('*') || rolePermissions.includes(permission);
 }
